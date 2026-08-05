@@ -29,7 +29,7 @@
     "contains_non_public_inventory": false,
     "digest": "sha256:626ce9eeb135af4bb1b0316aaf28b360a2a3305b344b81b7a43bbbfc87dee432",
     "path": "owners/discrete-event-systems.json",
-    "repository": "ORESoftware/project-registry"
+    "repository": "approved-private-registry"
   },
   "relationships": [
     {
