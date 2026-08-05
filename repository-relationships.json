@@ -1,10 +1,170 @@
 {
+  "$schema": "./repository-relationships.schema.json",
+  "audience": "public",
+  "generated": {
+    "complete_for_visibility": "public",
+    "generated_at": "2026-08-05T21:07:32Z",
+    "generator_version": "2026-08-04.1",
+    "inventory_digest": "sha256:6eaeaa131805488503d40dfa9219819fe153b03bf25fe287f0cd85bb3f2e1235",
+    "managed_by": "ore-repository-relationship-rollout",
+    "omitted_repository_count": 0,
+    "private_repositories_omitted": false,
+    "source": "GitHub GraphQL repository inventory plus reviewed manual declarations"
+  },
+  "owner": {
+    "account_type": "organization",
+    "dotgithub_repository": "discrete-event-systems/.github",
+    "github_id": "306297904",
+    "linear_project": {
+      "id": "b352c0c6-02f5-4a5a-8460-017aedb5352f",
+      "name": "github.com/discrete-event-systems",
+      "team_id": "eb8ab169-5afe-4b6f-9cab-3f2aa3e887dc",
+      "url": "https://linear.app/denman/project/githubcomdiscrete-event-systems-4a3086ae0c45",
+      "workspace": "denman"
+    },
+    "login": "discrete-event-systems",
+    "mapping_id": "context:discrete-event-systems"
+  },
+  "private_registry": {
+    "contains_non_public_inventory": false,
+    "digest": "sha256:626ce9eeb135af4bb1b0316aaf28b360a2a3305b344b81b7a43bbbfc87dee432",
+    "path": "owners/discrete-event-systems.json",
+    "repository": "ORESoftware/project-registry"
+  },
+  "relationships": [
+    {
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "kind": "github-owner-membership",
+          "source": "GitHub GraphQL repository inventory"
+        }
+      ],
+      "from": "discrete-event-systems/.github",
+      "id": "sha256:9e363e59788f60227e2a877dc260d0a48eeb41986008fbfebc64495ef0e84ff2",
+      "notes": "Organization .github policy and community-health defaults govern this sibling repository.",
+      "required": true,
+      "scope": "organization",
+      "status": "declared",
+      "to": "discrete-event-systems/des-mcp-server.rs",
+      "type": "governs"
+    },
+    {
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "kind": "github-owner-membership",
+          "source": "GitHub GraphQL repository inventory"
+        }
+      ],
+      "from": "discrete-event-systems/.github",
+      "id": "sha256:49d1a419454f63355eebc4556390c771244ea564b27821eb2404349b7393a0f2",
+      "notes": "Organization .github policy and community-health defaults govern this sibling repository.",
+      "required": true,
+      "scope": "organization",
+      "status": "declared",
+      "to": "discrete-event-systems/des-web.rs",
+      "type": "governs"
+    },
+    {
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "kind": "github-owner-membership",
+          "source": "GitHub GraphQL repository inventory"
+        }
+      ],
+      "from": "discrete-event-systems/.github",
+      "id": "sha256:02f771a1657e4119d618a464f62a1f67c910b138edd6fc9494ed85a8759f6650",
+      "notes": "Organization .github policy and community-health defaults govern this sibling repository.",
+      "required": true,
+      "scope": "organization",
+      "status": "declared",
+      "to": "discrete-event-systems/discrete-event-systems.github.io",
+      "type": "governs"
+    },
+    {
+      "confidence": 0.95,
+      "evidence": [
+        {
+          "kind": "repository-name",
+          "value": "discrete-event-systems.github.io"
+        }
+      ],
+      "from": "discrete-event-systems/discrete-event-systems.github.io",
+      "id": "sha256:44d7047b92126536e9e093f241de400eb92fcb77346c978ddfade97dda338b3e",
+      "notes": "The conventional *.github.io repository documents the organization profile.",
+      "required": false,
+      "scope": "organization",
+      "status": "inferred",
+      "to": "discrete-event-systems/.github",
+      "type": "documents"
+    }
+  ],
+  "repositories": [
+    {
+      "archived": false,
+      "default_branch": "main",
+      "fork": false,
+      "full_name": "discrete-event-systems/.github",
+      "github_id": "1324049032",
+      "name": ".github",
+      "owner": "discrete-event-systems",
+      "roles": [
+        "community-health",
+        "governance",
+        "relationship-registry"
+      ],
+      "source": "github-graphql-api",
+      "url": "https://github.com/discrete-event-systems/.github",
+      "visibility": "public"
+    },
+    {
+      "archived": false,
+      "default_branch": "main",
+      "fork": false,
+      "full_name": "discrete-event-systems/des-mcp-server.rs",
+      "github_id": "1304322353",
+      "name": "des-mcp-server.rs",
+      "owner": "discrete-event-systems",
+      "roles": [
+        "mcp-server"
+      ],
+      "source": "github-graphql-api",
+      "url": "https://github.com/discrete-event-systems/des-mcp-server.rs",
+      "visibility": "public"
+    },
+    {
+      "archived": false,
+      "default_branch": "main",
+      "fork": false,
+      "full_name": "discrete-event-systems/des-web.rs",
+      "github_id": "1304463521",
+      "name": "des-web.rs",
+      "owner": "discrete-event-systems",
+      "roles": [
+        "repository"
+      ],
+      "source": "github-graphql-api",
+      "url": "https://github.com/discrete-event-systems/des-web.rs",
+      "visibility": "public"
+    },
+    {
+      "archived": false,
+      "default_branch": "main",
+      "fork": false,
+      "full_name": "discrete-event-systems/discrete-event-systems.github.io",
+      "github_id": "1305082190",
+      "name": "discrete-event-systems.github.io",
+      "owner": "discrete-event-systems",
+      "roles": [
+        "documentation-site"
+      ],
+      "source": "github-graphql-api",
+      "url": "https://github.com/discrete-event-systems/discrete-event-systems.github.io",
+      "visibility": "public"
+    }
+  ],
   "schema_version": 1,
-  "organization": "discrete-event-systems",
-  "generated_at": null,
-  "repositories": [],
-  "notes": [
-    "Populate from live GitHub inventory; do not infer unverified dependencies.",
-    "Repository-local manifests remain authoritative for exact dependency versions."
-  ]
+  "unresolved_hints": []
 }
