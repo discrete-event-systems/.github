@@ -11,6 +11,30 @@ This file defines the organization-level routing contract for work owned by `dis
 
 The GitHub Project URL is the canonical routing target recorded in the fleet registry. Project-item reconciliation is automated by DEN-2242. Its latest evidence run was rate-limited, so an issue must not be described as attached to the board until a successful project-item result is recorded. Repository issues and Linear remain the authoritative fallback during that verification window.
 
+## DES browser automation fleet
+
+Browser verification for the canonical DES web surface is intentionally split from the application repository and runs from more than one independently versioned repository in `discrete-event-systems-test`.
+
+Planning and execution routing:
+
+- Product browser-automation board: [discrete-event-systems Project 2](https://github.com/orgs/discrete-event-systems/projects/2)
+- Test execution board: [discrete-event-systems-test Project 1](https://github.com/orgs/discrete-event-systems-test/projects/1)
+- Test-org planning document: [discrete-event-systems-test/.github/docs/PROJECTS.md](https://github.com/discrete-event-systems-test/.github/blob/main/docs/PROJECTS.md)
+- Linear product browser tracker: [DEN-2444](https://linear.app/denman/issue/DEN-2444)
+- Linear cross-repository automation tracker: [DEN-2447](https://linear.app/denman/issue/DEN-2447)
+- Linear exact-SHA indie-worker evidence: [DEN-2657](https://linear.app/denman/issue/DEN-2657)
+
+Immutable test revisions:
+
+| Repository | Driver | Exact revision | Hosted lane | Independent lane |
+| --- | --- | --- | --- | --- |
+| `discrete-event-systems-test/des-web-playwright-e2e` | Playwright | `1e1116ef6811c4e3e6be34ad3e1def39bc20ef59` | GitHub Actions | `gha-indie-worker` fixed `playwright` profile |
+| `discrete-event-systems-test/des-web-puppeteer-e2e` | Puppeteer | `0547548429d937023a124de37afca7659a85c3dd` | GitHub Actions | `gha-indie-worker` fixed `puppeteer` profile |
+
+The hosted GitHub Actions lane and `gha-indie-worker` lane are deliberately independent. The independent lane accepts only immutable commit SHAs and reviewed `.github/workflows/gha-indie-worker.yml` files. The `dd-build-server` remains unprivileged; exact DES browser profiles are delegated to the separately authenticated `dd-ci-profile-runner`, whose policy binds only the two repositories above to their fixed profiles. The runtime change is merged in `ORESoftware/k8s-cluster#1171` and was promoted to the Argo-tracked `dev` branch in `ORESoftware/k8s-cluster#1176`.
+
+Protected execution also registers/resolves an `ai-agent-bridge` channel and posts the claimed lane, blockers, and completion result so parallel agents can avoid overlapping mutations. Live two-repository certification and retained build IDs remain recorded in DEN-2657 rather than inferred from deployment state.
+
 ## Canonical `/des` web delivery
 
 ### Application ownership
