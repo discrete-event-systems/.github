@@ -1,0 +1,133 @@
+name: DES cross-repository E2E orchestrator
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * *'
+  pull_request:
+    paths:
+      - '.github/workflows/des-e2e-orchestrator.yml'
+      - 'DES_E2E_REVISIONS.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: des-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    name: Repository inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Verify currently provisioned repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=(
+            discrete-event-systems/des-web.rs
+            discrete-event-systems/des-mcp-server.rs
+            discrete-event-systems/discrete-event-systems.github.io
+            discrete-event-systems-test/des-web-playwright-e2e
+            discrete-event-systems-test/des-web-puppeteer-e2e
+          )
+          for repo in "${current[@]}"; do
+            echo "checking $repo"
+            git ls-remote --exit-code "https://github.com/${repo}.git" HEAD >/dev/null
+          done
+
+      - name: Report planned repositories not yet provisioned
+        shell: bash
+        run: |
+          set -euo pipefail
+          planned=(
+            discrete-event-systems/des-e2e
+            discrete-event-systems/des-interfaces
+            discrete-event-systems/des-lib
+            discrete-event-systems/des-clients
+            discrete-event-systems/des-cli
+            discrete-event-systems/des-api-server.rs
+            discrete-event-systems/des-infra
+            discrete-event-systems/des-monorepo
+            discrete-event-systems-test/des-web-selenium-e2e
+            discrete-event-systems-test/des-api-contract-e2e
+            discrete-event-systems-test/des-cli-e2e
+            discrete-event-systems-test/des-mcp-server-e2e
+            discrete-event-systems-test/des-monorepo-integration-e2e
+            discrete-event-systems-test/des-zpkg-integration-e2e
+          )
+          for repo in "${planned[@]}"; do
+            if git ls-remote --exit-code "https://github.com/${repo}.git" HEAD >/dev/null 2>&1; then
+              echo "::notice::$repo is now available; promote it into the active test matrix"
+            else
+              echo "::warning::$repo is not provisioned yet"
+            fi
+          done
+
+  des-web-rust:
+    name: des-web.rs Rust tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Clone des-web.rs
+        run: git clone --depth=1 https://github.com/discrete-event-systems/des-web.rs.git repo
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test
+        working-directory: repo
+        run: cargo test --all-targets --locked
+
+  des-mcp-rust:
+    name: des-mcp-server.rs Rust tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Clone des-mcp-server.rs
+        run: git clone --depth=1 https://github.com/discrete-event-systems/des-mcp-server.rs.git repo
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test
+        working-directory: repo
+        run: cargo test --all-targets --locked
+
+  playwright:
+    name: Playwright browser contracts
+    uses: discrete-event-systems-test/des-web-playwright-e2e/.github/workflows/browser-tests.yml@1e1116ef6811c4e3e6be34ad3e1def39bc20ef59
+    with:
+      suite_ref: 1e1116ef6811c4e3e6be34ad3e1def39bc20ef59
+
+  puppeteer:
+    name: Puppeteer browser contracts
+    uses: discrete-event-systems-test/des-web-puppeteer-e2e/.github/workflows/browser-tests.yml@0547548429d937023a124de37afca7659a85c3dd
+    with:
+      suite_ref: 0547548429d937023a124de37afca7659a85c3dd
+
+  release-gate:
+    name: DES E2E release gate
+    if: always()
+    needs:
+      - inventory
+      - des-web-rust
+      - des-mcp-rust
+      - playwright
+      - puppeteer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all active suites to pass
+        env:
+          INVENTORY: ${{ needs.inventory.result }}
+          WEB: ${{ needs.des-web-rust.result }}
+          MCP: ${{ needs.des-mcp-rust.result }}
+          PLAYWRIGHT: ${{ needs.playwright.result }}
+          PUPPETEER: ${{ needs.puppeteer.result }}
+        run: |
+          set -euo pipefail
+          printf 'inventory=%s\nweb=%s\nmcp=%s\nplaywright=%s\npuppeteer=%s\n' \
+            "$INVENTORY" "$WEB" "$MCP" "$PLAYWRIGHT" "$PUPPETEER"
+          test "$INVENTORY" = success
+          test "$WEB" = success
+          test "$MCP" = success
+          test "$PLAYWRIGHT" = success
+          test "$PUPPETEER" = success
