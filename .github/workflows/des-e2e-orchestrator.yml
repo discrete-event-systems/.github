@@ -66,18 +66,27 @@ jobs:
             fi
           done
 
-  des-web-rust:
-    name: des-web.rs Rust tests
+  des-web-native-ci:
+    name: des-web.rs native CI gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
-      - name: Clone des-web.rs
-        run: git clone --depth=1 https://github.com/discrete-event-systems/des-web.rs.git repo
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cargo test
-        working-directory: repo
-        run: cargo test --all-targets --locked
+      - name: Require current main SHA to have successful native CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo=discrete-event-systems/des-web.rs
+          head_sha=$(git ls-remote "https://github.com/${repo}.git" refs/heads/main | cut -f1)
+          test -n "$head_sha"
+          payload=$(curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=1")
+          ci_sha=$(jq -r '.workflow_runs[0].head_sha // empty' <<<"$payload")
+          echo "des-web main=$head_sha latest-successful-native-ci=$ci_sha"
+          if [[ "$head_sha" != "$ci_sha" ]]; then
+            echo "::error::Current des-web.rs main has no matching successful native CI run. Its private recursive submodule must be validated in des-web.rs using LIBS_DEPLOY_KEY."
+            exit 1
+          fi
 
   des-mcp-rust:
     name: des-mcp-server.rs Rust tests
@@ -87,7 +96,7 @@ jobs:
       - name: Clone des-mcp-server.rs
         run: git clone --depth=1 https://github.com/discrete-event-systems/des-mcp-server.rs.git repo
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - name: Cargo test
         working-directory: repo
         run: cargo test --all-targets --locked
@@ -109,7 +118,7 @@ jobs:
     if: always()
     needs:
       - inventory
-      - des-web-rust
+      - des-web-native-ci
       - des-mcp-rust
       - playwright
       - puppeteer
@@ -118,7 +127,7 @@ jobs:
       - name: Require all active suites to pass
         env:
           INVENTORY: ${{ needs.inventory.result }}
-          WEB: ${{ needs.des-web-rust.result }}
+          WEB: ${{ needs.des-web-native-ci.result }}
           MCP: ${{ needs.des-mcp-rust.result }}
           PLAYWRIGHT: ${{ needs.playwright.result }}
           PUPPETEER: ${{ needs.puppeteer.result }}
