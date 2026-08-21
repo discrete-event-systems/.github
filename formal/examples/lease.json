@@ -1,0 +1,83 @@
+{
+  "$schema": "des/state-machine/v1",
+  "name": "exclusive lease lifecycle",
+  "initial": "free",
+  "states": {
+    "free": {
+      "status": "free",
+      "owners": 0,
+      "fenced": false
+    },
+    "held": {
+      "status": "held",
+      "owners": 1,
+      "fenced": false
+    },
+    "fenced": {
+      "status": "fenced",
+      "owners": 0,
+      "fenced": true
+    },
+    "released": {
+      "status": "released",
+      "owners": 0,
+      "fenced": false
+    }
+  },
+  "transitions": [
+    {
+      "event": "acquire",
+      "from": "free",
+      "to": "held"
+    },
+    {
+      "event": "release",
+      "from": "held",
+      "to": "released"
+    },
+    {
+      "event": "fence",
+      "from": "held",
+      "to": "fenced"
+    }
+  ],
+  "invariants": [
+    {
+      "name": "at most one owner",
+      "assert": [
+        {
+          "path": "/owners",
+          "op": "lte",
+          "right": {
+            "value": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "fenced leases have no owner",
+      "when": [
+        {
+          "path": "/fenced",
+          "op": "eq",
+          "right": {
+            "value": true
+          }
+        }
+      ],
+      "assert": [
+        {
+          "path": "/owners",
+          "op": "eq",
+          "right": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "terminal_states": [
+    "fenced",
+    "released"
+  ]
+}
