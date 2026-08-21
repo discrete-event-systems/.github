@@ -1,0 +1,32 @@
+name: formal-model-check-selftest
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/reusable-formal-model-check.yml
+      - .github/workflows/formal-model-check-selftest.yml
+      - formal/examples/**
+      - FORMAL_VERIFICATION.md
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-formal-model-check.yml
+      - .github/workflows/formal-model-check-selftest.yml
+      - formal/examples/**
+      - FORMAL_VERIFICATION.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-model-check-selftest-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  organization-fixture:
+    uses: ./.github/workflows/reusable-formal-model-check.yml
+    with:
+      model_glob: formal/examples/*.json
+      max_states: 1000
