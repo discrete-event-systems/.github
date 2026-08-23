@@ -13,9 +13,11 @@ Describe affected repositories, APIs, schemas, generated artifacts, migrations, 
 ## Validation
 
 - [ ] Relevant formatters, linters, tests, builds, contract checks, security checks, and end-to-end checks passed
+- [ ] Validation ran against the exact proposed head and authoritative remote checks were inspected
 - [ ] Conflicts, if any, were resolved semantically using both sides, 3–10 relevant prior commits when useful, and cross-repository context
 - [ ] No destructive or history-rewriting operation was executed or recommended
 - [ ] No secrets, personal data, or production data are included
+- [ ] External Actions and source revisions are immutable, with least-privilege workflow permissions
 
 ## Risks and roll-forward plan
 
