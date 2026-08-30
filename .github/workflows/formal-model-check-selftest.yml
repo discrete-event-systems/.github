@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/reusable-formal-model-check.yml
       - .github/workflows/formal-model-check-selftest.yml
+      - tools/formal-gate/**
       - formal/examples/**
       - FORMAL_VERIFICATION.md
   push:
@@ -13,6 +14,7 @@ on:
     paths:
       - .github/workflows/reusable-formal-model-check.yml
       - .github/workflows/formal-model-check-selftest.yml
+      - tools/formal-gate/**
       - formal/examples/**
       - FORMAL_VERIFICATION.md
   workflow_dispatch:
