@@ -1,0 +1,154 @@
+name: reusable-formal-model-check
+
+on:
+  workflow_call:
+    inputs:
+      model_glob:
+        description: Relative glob for versioned DES state-machine JSON models
+        required: false
+        type: string
+        default: formal/**/*.json
+      max_states:
+        description: Maximum declared states accepted per model
+        required: false
+        type: number
+        default: 10000
+
+permissions:
+  contents: read
+
+jobs:
+  formal-model-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Check out immutable DES checker
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: discrete-event-systems/des-mcp-server.rs
+          ref: c14220c7d86ca92a5a5fb332a53615a71c3b9b03
+          path: .des-formal-checker
+          persist-credentials: false
+
+      - name: Verify checker revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='c14220c7d86ca92a5a5fb332a53615a71c3b9b03'
+          actual="$(git -C .des-formal-checker rev-parse HEAD)"
+          test "$actual" = "$expected"
+          printf 'DES checker revision: %s\n' "$actual"
+
+      - name: Install repository Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+
+      - name: Build pinned checker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build \
+            --locked \
+            --release \
+            --manifest-path .des-formal-checker/Cargo.toml \
+            --bin des-formal-check
+
+      - name: Exhaustively check bounded models
+        env:
+          MODEL_GLOB: ${{ inputs.model_glob }}
+          MAX_STATES: ${{ inputs.max_states }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob
+          import os
+          from pathlib import Path, PurePosixPath
+          import subprocess
+          import sys
+
+          root = Path.cwd().resolve()
+          checker_root = (root / ".des-formal-checker").resolve()
+          checker = checker_root / "target/release/des-formal-check"
+          pattern = os.environ.get("MODEL_GLOB", "").strip()
+
+          if not pattern:
+              raise SystemExit("model_glob must not be empty")
+          pure_pattern = PurePosixPath(pattern)
+          if pure_pattern.is_absolute() or ".." in pure_pattern.parts:
+              raise SystemExit("model_glob must be a relative path without '..'")
+          if not pattern.endswith(".json"):
+              raise SystemExit("model_glob must select JSON files")
+
+          try:
+              max_states = int(os.environ["MAX_STATES"])
+          except (KeyError, ValueError) as error:
+              raise SystemExit("max_states must be an integer") from error
+          if not 1 <= max_states <= 100_000:
+              raise SystemExit("max_states must be between 1 and 100000")
+
+          def is_within(path: Path, parent: Path) -> bool:
+              try:
+                  path.relative_to(parent)
+                  return True
+              except ValueError:
+                  return False
+
+          models: list[Path] = []
+          total_bytes = 0
+          for raw_path in sorted(set(glob.glob(str(root / pattern), recursive=True))):
+              candidate = Path(raw_path)
+              if not candidate.is_file():
+                  continue
+              resolved = candidate.resolve(strict=True)
+              if not is_within(resolved, root):
+                  raise SystemExit(f"model escapes the workspace: {candidate}")
+              if is_within(resolved, checker_root):
+                  raise SystemExit(f"model_glob selected checker source: {candidate}")
+              if resolved.suffix != ".json":
+                  raise SystemExit(f"non-JSON model selected: {candidate}")
+              size = resolved.stat().st_size
+              if size > 5 * 1024 * 1024:
+                  raise SystemExit(f"model exceeds 5 MiB: {candidate}")
+              total_bytes += size
+              models.append(resolved.relative_to(root))
+
+          if not models:
+              raise SystemExit(f"no model files matched {pattern!r}")
+          if len(models) > 250:
+              raise SystemExit(f"model_glob matched {len(models)} files; limit is 250")
+          if total_bytes > 20 * 1024 * 1024:
+              raise SystemExit("selected models exceed the 20 MiB aggregate limit")
+          if not checker.is_file():
+              raise SystemExit(f"checker binary not found: {checker}")
+
+          print(f"Checking {len(models)} model(s) with max_states={max_states}")
+          completed = subprocess.run(
+              [str(checker), "--max-states", str(max_states), *map(str, models)],
+              cwd=root,
+              text=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              check=False,
+          )
+          sys.stdout.write(completed.stdout)
+          sys.stderr.write(completed.stderr)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path and completed.stdout:
+              summary = completed.stdout
+              limit = 900_000
+              if len(summary.encode("utf-8")) > limit:
+                  summary = summary.encode("utf-8")[:limit].decode("utf-8", "ignore")
+                  summary += "\n\n_Output truncated in the job summary; see the job log._\n"
+              with open(summary_path, "a", encoding="utf-8") as summary_file:
+                  summary_file.write(summary)
+
+          raise SystemExit(completed.returncode)
+          PY
