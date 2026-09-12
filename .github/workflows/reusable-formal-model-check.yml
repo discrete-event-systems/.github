@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       model_glob:
-        description: Relative glob for versioned DES state-machine JSON models
+        description: Relative POSIX glob using literal components, *, ?, or **
         required: false
         type: string
         default: formal/**/*.json
@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+env:
+  CHECKER_SHA: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
+  GATE_SHA: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+
 jobs:
   formal-model-check:
     runs-on: ubuntu-24.04
@@ -27,128 +31,93 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Reserve helper paths without overwriting caller files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in .des-formal-checker .des-formal-gate; do
+            if [[ -e "$directory" || -L "$directory" ]]; then
+              echo "Caller checkout occupies a reserved formal-checker path" >&2
+              exit 2
+            fi
+          done
+          printf 'CALLER_SHA=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          node --version
+
       - name: Check out immutable DES checker
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: discrete-event-systems/des-mcp-server.rs
-          ref: c14220c7d86ca92a5a5fb332a53615a71c3b9b03
+          ref: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
           path: .des-formal-checker
           persist-credentials: false
 
-      - name: Verify checker revision
+      - name: Check out immutable gate runner
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: discrete-event-systems/.github
+          ref: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+          path: .des-formal-gate
+          persist-credentials: false
+
+      - name: Verify helper revisions
         shell: bash
         run: |
           set -euo pipefail
-          expected='c14220c7d86ca92a5a5fb332a53615a71c3b9b03'
-          actual="$(git -C .des-formal-checker rev-parse HEAD)"
-          test "$actual" = "$expected"
-          printf 'DES checker revision: %s\n' "$actual"
+          test "$(git -C .des-formal-checker rev-parse HEAD)" = "$CHECKER_SHA"
+          test "$(git -C .des-formal-gate rev-parse HEAD)" = "$GATE_SHA"
+          printf 'Checker: %s\nGate: %s\nCaller checkout: %s\n' "$CHECKER_SHA" "$GATE_SHA" "$CALLER_SHA"
 
-      - name: Install repository Rust toolchain
+      - name: Prevent self-test source drift
+        if: github.repository == 'discrete-event-systems/.github'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp tools/formal-gate/runner.mjs .des-formal-gate/tools/formal-gate/runner.mjs
+          cmp tools/formal-gate/runner.test.mjs .des-formal-gate/tools/formal-gate/runner.test.mjs
+
+      - name: Install the validated Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          toolchain: stable
+          toolchain: 1.98.0
 
-      - name: Build pinned checker
+      - name: Build the pinned checker outside caller configuration
         shell: bash
         run: |
           set -euo pipefail
-          cargo build \
-            --locked \
-            --release \
-            --manifest-path .des-formal-checker/Cargo.toml \
-            --bin des-formal-check
+          build_root="$(mktemp -d "${RUNNER_TEMP}/des-formal-build.XXXXXX")"
+          git -C .des-formal-checker archive "$CHECKER_SHA" | tar -x -C "$build_root"
+          (
+            cd "$build_root"
+            cargo +1.98.0 build --locked --release --bin des-formal-check
+          )
+          printf 'CHECKER_PATH=%s\n' "$build_root/target/release/des-formal-check" >> "$GITHUB_ENV"
+          printf 'DES_FORMAL_CHECKER_PATH=%s\n' "$build_root/target/release/des-formal-check" >> "$GITHUB_ENV"
 
-      - name: Exhaustively check bounded models
+      - name: Require runner tests and real-verifier negative controls
+        env:
+          DES_REQUIRE_NATIVE_CHECKER: '1'
+          NODE_OPTIONS: ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check .des-formal-gate/tools/formal-gate/runner.mjs
+          node --test .des-formal-gate/tools/formal-gate/runner.test.mjs
+
+      - name: Check models and record exact-input evidence
         env:
           MODEL_GLOB: ${{ inputs.model_glob }}
           MAX_STATES: ${{ inputs.max_states }}
+          EVIDENCE_PATH: ${{ runner.temp }}/formal-gate-evidence.json
+          NODE_OPTIONS: ''
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import glob
-          import os
-          from pathlib import Path, PurePosixPath
-          import subprocess
-          import sys
-
-          root = Path.cwd().resolve()
-          checker_root = (root / ".des-formal-checker").resolve()
-          checker = checker_root / "target/release/des-formal-check"
-          pattern = os.environ.get("MODEL_GLOB", "").strip()
-
-          if not pattern:
-              raise SystemExit("model_glob must not be empty")
-          pure_pattern = PurePosixPath(pattern)
-          if pure_pattern.is_absolute() or ".." in pure_pattern.parts:
-              raise SystemExit("model_glob must be a relative path without '..'")
-          if not pattern.endswith(".json"):
-              raise SystemExit("model_glob must select JSON files")
-
-          try:
-              max_states = int(os.environ["MAX_STATES"])
-          except (KeyError, ValueError) as error:
-              raise SystemExit("max_states must be an integer") from error
-          if not 1 <= max_states <= 100_000:
-              raise SystemExit("max_states must be between 1 and 100000")
-
-          def is_within(path: Path, parent: Path) -> bool:
-              try:
-                  path.relative_to(parent)
-                  return True
-              except ValueError:
-                  return False
-
-          models: list[Path] = []
-          total_bytes = 0
-          for raw_path in sorted(set(glob.glob(str(root / pattern), recursive=True))):
-              candidate = Path(raw_path)
-              if not candidate.is_file():
-                  continue
-              resolved = candidate.resolve(strict=True)
-              if not is_within(resolved, root):
-                  raise SystemExit(f"model escapes the workspace: {candidate}")
-              if is_within(resolved, checker_root):
-                  raise SystemExit(f"model_glob selected checker source: {candidate}")
-              if resolved.suffix != ".json":
-                  raise SystemExit(f"non-JSON model selected: {candidate}")
-              size = resolved.stat().st_size
-              if size > 5 * 1024 * 1024:
-                  raise SystemExit(f"model exceeds 5 MiB: {candidate}")
-              total_bytes += size
-              models.append(resolved.relative_to(root))
-
-          if not models:
-              raise SystemExit(f"no model files matched {pattern!r}")
-          if len(models) > 250:
-              raise SystemExit(f"model_glob matched {len(models)} files; limit is 250")
-          if total_bytes > 20 * 1024 * 1024:
-              raise SystemExit("selected models exceed the 20 MiB aggregate limit")
-          if not checker.is_file():
-              raise SystemExit(f"checker binary not found: {checker}")
-
-          print(f"Checking {len(models)} model(s) with max_states={max_states}")
-          completed = subprocess.run(
-              [str(checker), "--max-states", str(max_states), *map(str, models)],
-              cwd=root,
-              text=True,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE,
-              check=False,
-          )
-          sys.stdout.write(completed.stdout)
-          sys.stderr.write(completed.stderr)
-
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-          if summary_path and completed.stdout:
-              summary = completed.stdout
-              limit = 900_000
-              if len(summary.encode("utf-8")) > limit:
-                  summary = summary.encode("utf-8")[:limit].decode("utf-8", "ignore")
-                  summary += "\n\n_Output truncated in the job summary; see the job log._\n"
-              with open(summary_path, "a", encoding="utf-8") as summary_file:
-                  summary_file.write(summary)
-
-          raise SystemExit(completed.returncode)
-          PY
+          marker="$(cat /proc/sys/kernel/random/uuid)"
+          printf '::stop-commands::%s\n' "$marker"
+          set +e
+          node .des-formal-gate/tools/formal-gate/runner.mjs
+          status=$?
+          set -e
+          printf '::%s::\n' "$marker"
+          exit "$status"
