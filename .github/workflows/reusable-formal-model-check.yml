@@ -1,0 +1,123 @@
+name: reusable-formal-model-check
+
+on:
+  workflow_call:
+    inputs:
+      model_glob:
+        description: Relative POSIX glob using literal components, *, ?, or **
+        required: false
+        type: string
+        default: formal/**/*.json
+      max_states:
+        description: Maximum declared states accepted per model
+        required: false
+        type: number
+        default: 10000
+
+permissions:
+  contents: read
+
+env:
+  CHECKER_SHA: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
+  GATE_SHA: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+
+jobs:
+  formal-model-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Reserve helper paths without overwriting caller files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in .des-formal-checker .des-formal-gate; do
+            if [[ -e "$directory" || -L "$directory" ]]; then
+              echo "Caller checkout occupies a reserved formal-checker path" >&2
+              exit 2
+            fi
+          done
+          printf 'CALLER_SHA=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          node --version
+
+      - name: Check out immutable DES checker
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: discrete-event-systems/des-mcp-server.rs
+          ref: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
+          path: .des-formal-checker
+          persist-credentials: false
+
+      - name: Check out immutable gate runner
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: discrete-event-systems/.github
+          ref: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+          path: .des-formal-gate
+          persist-credentials: false
+
+      - name: Verify helper revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .des-formal-checker rev-parse HEAD)" = "$CHECKER_SHA"
+          test "$(git -C .des-formal-gate rev-parse HEAD)" = "$GATE_SHA"
+          printf 'Checker: %s\nGate: %s\nCaller checkout: %s\n' "$CHECKER_SHA" "$GATE_SHA" "$CALLER_SHA"
+
+      - name: Prevent self-test source drift
+        if: github.repository == 'discrete-event-systems/.github'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp tools/formal-gate/runner.mjs .des-formal-gate/tools/formal-gate/runner.mjs
+          cmp tools/formal-gate/runner.test.mjs .des-formal-gate/tools/formal-gate/runner.test.mjs
+
+      - name: Install the validated Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.98.0
+
+      - name: Build the pinned checker outside caller configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_root="$(mktemp -d "${RUNNER_TEMP}/des-formal-build.XXXXXX")"
+          git -C .des-formal-checker archive "$CHECKER_SHA" | tar -x -C "$build_root"
+          (
+            cd "$build_root"
+            cargo +1.98.0 build --locked --release --bin des-formal-check
+          )
+          printf 'CHECKER_PATH=%s\n' "$build_root/target/release/des-formal-check" >> "$GITHUB_ENV"
+          printf 'DES_FORMAL_CHECKER_PATH=%s\n' "$build_root/target/release/des-formal-check" >> "$GITHUB_ENV"
+
+      - name: Require runner tests and real-verifier negative controls
+        env:
+          DES_REQUIRE_NATIVE_CHECKER: '1'
+          NODE_OPTIONS: ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check .des-formal-gate/tools/formal-gate/runner.mjs
+          node --test .des-formal-gate/tools/formal-gate/runner.test.mjs
+
+      - name: Check models and record exact-input evidence
+        env:
+          MODEL_GLOB: ${{ inputs.model_glob }}
+          MAX_STATES: ${{ inputs.max_states }}
+          EVIDENCE_PATH: ${{ runner.temp }}/formal-gate-evidence.json
+          NODE_OPTIONS: ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(cat /proc/sys/kernel/random/uuid)"
+          printf '::stop-commands::%s\n' "$marker"
+          set +e
+          node .des-formal-gate/tools/formal-gate/runner.mjs
+          status=$?
+          set -e
+          printf '::%s::\n' "$marker"
+          exit "$status"
