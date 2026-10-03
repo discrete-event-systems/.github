@@ -49,11 +49,11 @@ DES_FORMAL_CHECKER_PATH=/absolute/path/to/des-formal-check \
 node --test tools/formal-gate/runner.test.mjs
 ```
 
-The reusable CI workflow sets both variables and requires all 26 tests, including real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, and missing guard inputs. The native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
+The reusable CI workflow sets both variables and requires all 32 tests: 21 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
 
 ## Review order
 
-This change is stacked on `.github#17` and depends on `des-mcp-server.rs#35`, itself stacked on #28. Accept the checker correction into #28 before approving the initial checker. Accept this gate correction into #17 before approving the initial reusable gate. Re-check final merge results and deliberately repin helpers after review; branch deletion or squash merging must not be assumed to preserve ancestry of the pinned commits.
+The original gate (#17) and first hardening pass (#21) are already on `main`. This follow-up depends on `des-mcp-server.rs#55`, stacked on the still-open checker feature #28. Review the strict checker first, then this gate pin. Re-check exact merge results and deliberately repin helpers after review; do not assume branch ancestry or a squash strategy preserves an intended helper revision.
 
 
 ## Process and policy hardening
