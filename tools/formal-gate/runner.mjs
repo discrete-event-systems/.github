@@ -195,8 +195,32 @@ export function runProcess(command, args, options = {}) {
       killTree();
       if (signal) reason ??= `checker terminated by ${signal}`;
       if (![0, 1, 2].includes(code)) reason ??= 'checker returned an unexpected exit status';
-      resolve({ code: reason ? 2 : code, reason,
-        stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') });
+      const stdoutBytes = Buffer.concat(stdout);
+      const stderrBytes = Buffer.concat(stderr);
+      let stdoutText = '', stderrText = '';
+      try {
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        stdoutText = decoder.decode(stdoutBytes);
+        stderrText = decoder.decode(stderrBytes);
+      } catch {
+        reason ??= 'checker output is not valid UTF-8';
+      }
+      resolve({
+        code: reason ? 2 : code,
+        reason,
+        stdout: stdoutText,
+        stderr: stderrText,
+        outputEvidence: {
+          stdout: {
+            bytes: stdoutBytes.length,
+            sha256: createHash('sha256').update(stdoutBytes).digest('hex'),
+          },
+          stderr: {
+            bytes: stderrBytes.length,
+            sha256: createHash('sha256').update(stderrBytes).digest('hex'),
+          },
+        },
+      });
     });
   });
 }
@@ -227,11 +251,19 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
   const cap = normalizeLimits(limits);
   root = await fs.realpath(root);
   checker = await fs.realpath(checker);
-  const checkerBinary = await hashRegularFile(checker);
+  const sourceChecker = await hashRegularFile(checker);
   const excludedPaths = excluded.map(p => path.resolve(root, p));
   const files = await discoverModels(root, pattern, { limits: cap, excluded });
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'des-formal-input-'));
   try {
+    const checkerSnapshot = path.join(temporary, 'des-formal-check');
+    await fs.copyFile(checker, checkerSnapshot, constants.COPYFILE_EXCL);
+    await fs.chmod(checkerSnapshot, 0o500);
+    const checkerBinary = await hashRegularFile(checkerSnapshot);
+    if (checkerBinary.bytes !== sourceChecker.bytes || checkerBinary.sha256 !== sourceChecker.sha256) {
+      throw new Error('checker changed while creating the private execution snapshot');
+    }
+
     const models = [], paths = [];
     let total = 0;
     for (const [index, file] of files.entries()) {
@@ -244,24 +276,21 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
       models.push({ path: file.relative, bytes: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex') });
     }
-    const result = await runProcess(checker, ['--strict', '--max-states', String(bound), '--', ...paths], {
-      cwd: temporary, limits: cap,
-    });
+    const result = await runProcess(
+      checkerSnapshot,
+      ['--strict', '--max-states', String(bound), '--', ...paths],
+      { cwd: temporary, limits: cap },
+    );
     if (result.code === 0 && !result.stdout.trim()) {
       result.code = 2;
       result.reason = 'checker reported success without evidence';
     }
-    const stdoutBytes = Buffer.byteLength(result.stdout);
-    const stderrBytes = Buffer.byteLength(result.stderr);
     return { ...result, evidence: {
       schema: 'des.formal-gate.evidence.v2',
       profile: 'organization-baseline-v1',
       modelOnly: true,
       revisions, maxStates: bound, models, checkerBinary,
-      output: {
-        stdout: { bytes: stdoutBytes, sha256: createHash('sha256').update(result.stdout).digest('hex') },
-        stderr: { bytes: stderrBytes, sha256: createHash('sha256').update(result.stderr).digest('hex') },
-      },
+      output: result.outputEvidence,
       outcome: result.code === 0 ? 'PASS' : result.code === 1 ? 'COUNTEREXAMPLE' : 'ERROR',
       exitCode: result.code, executionError: result.reason,
     } };

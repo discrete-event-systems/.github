@@ -191,8 +191,22 @@ test('snapshots preserve exact checked bytes and their original path hashes', as
   assert.equal(result.evidence.schema, 'des.formal-gate.evidence.v2');
   assert.match(result.evidence.checkerBinary.sha256, /^[0-9a-f]{64}$/);
   assert.match(result.evidence.output.stdout.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(result.evidence.output.stdout.bytes, Buffer.byteLength(result.stdout));
   await assert.rejects(fs.stat(snapshots[0].path), { code: 'ENOENT' });
   assert.equal(await fs.readFile(original, 'utf8'), raw);
+});
+
+test('invalid UTF-8 checker output fails closed while preserving raw-byte evidence', async () => {
+  const result = await runProcess(process.execPath, [
+    '-e', 'process.stdout.write(Buffer.from([0xff])); process.exit(0);',
+  ]);
+  assert.equal(result.code, 2);
+  assert.match(result.reason, /not valid UTF-8/);
+  assert.equal(result.outputEvidence.stdout.bytes, 1);
+  assert.equal(
+    result.outputEvidence.stdout.sha256,
+    createHash('sha256').update(Buffer.from([0xff])).digest('hex'),
+  );
 });
 
 test('process exit codes 0, 1, and 2 remain distinct', async () => {

@@ -67,3 +67,10 @@ The organization gate always invokes `des-formal-check --strict`. The generic
 checker remains available outside the reusable organization workflow for exploratory
 models, but permissive settings are never promoted to organization-baseline PASS
 evidence.
+
+
+The checker is copied into the invocation-owned private temporary directory before
+execution. The source and private executable must have identical size and SHA-256,
+and evidence records the private executable actually invoked. Captured stdout/stderr
+hashes are computed over the exact bounded byte buffers before UTF-8 decoding;
+invalid UTF-8 output is an execution error rather than replacement-character text.
