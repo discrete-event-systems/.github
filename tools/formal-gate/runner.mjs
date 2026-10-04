@@ -345,7 +345,12 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
 
 async function main() {
   const revisions = {};
-  for (const [name, variable] of [['caller', 'CALLER_SHA'], ['checker', 'CHECKER_SHA'], ['runner', 'GATE_SHA']]) {
+  for (const [name, variable] of [
+    ['caller', 'CALLER_SHA'],
+    ['checker', 'CHECKER_SHA'],
+    ['runner', 'GATE_SHA'],
+    ['workflow', 'WORKFLOW_SHA'],
+  ]) {
     const value = process.env[variable];
     if (!/^[0-9a-f]{40}$/.test(value ?? '')) throw new Error(`${variable} must identify the exact checked revision`);
     revisions[name] = value;
