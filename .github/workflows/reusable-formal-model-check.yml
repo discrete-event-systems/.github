@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 env:
-  CHECKER_SHA: 07a2fd4ff2e12ef7305d8d1a9bf483a299a6dea6
+  CHECKER_SHA: 31119a0bebb260f84d574e1d1d8e90b51bfb0dc9
   GATE_SHA: 67139fad8f1eeb6201999915ac395dac40f0c99e
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: discrete-event-systems/des-mcp-server.rs
-          ref: 07a2fd4ff2e12ef7305d8d1a9bf483a299a6dea6
+          ref: 31119a0bebb260f84d574e1d1d8e90b51bfb0dc9
           path: .des-formal-checker
           persist-credentials: false
 
