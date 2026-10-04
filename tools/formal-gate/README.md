@@ -49,7 +49,7 @@ DES_FORMAL_CHECKER_PATH=/absolute/path/to/des-formal-check \
 node --test tools/formal-gate/runner.test.mjs
 ```
 
-The reusable CI workflow sets both variables and requires all 32 tests: 21 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
+The reusable CI workflow sets both variables and requires all 33 tests: 22 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
 
 ## Review order
 
