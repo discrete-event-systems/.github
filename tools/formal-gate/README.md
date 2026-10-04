@@ -21,7 +21,7 @@ The workflow deliberately runs on Linux. Reads use `O_NOFOLLOW`, `O_NONBLOCK`, r
 Each selected file is copied byte-for-byte into a private temporary directory. SHA-256 is calculated from those same bytes, not a separately re-read pathname or JSON reserialization. The checker receives the snapshots as arguments after `--`, without shell expansion. This is a raw-byte evidence hash, not JCS canonicalization or an `ores.formal-interchange.v1` conformance claim.
 
 The evidence object has schema `des.formal-gate.evidence.v2` and profile
-`organization-baseline-v1`. It records caller/checker/runner revisions, model paths
+`organization-baseline-v1`. It records caller/checker/runner/workflow revisions, model paths
 and exact-byte hashes, the state bound, the built checker binary's SHA-256 and byte
 size, and hashes/byte counts of captured stdout and stderr, plus one of:
 
