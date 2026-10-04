@@ -49,7 +49,7 @@ DES_FORMAL_CHECKER_PATH=/absolute/path/to/des-formal-check \
 node --test tools/formal-gate/runner.test.mjs
 ```
 
-The reusable CI workflow sets both variables and requires all 33 tests: 22 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
+The reusable CI workflow sets both variables and requires all 35 tests: 24 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
 
 ## Review order
 
@@ -74,3 +74,17 @@ execution. The source and private executable must have identical size and SHA-25
 and evidence records the private executable actually invoked. Captured stdout/stderr
 hashes are computed over the exact bounded byte buffers before UTF-8 decoding;
 invalid UTF-8 output is an execution error rather than replacement-character text.
+
+
+## Execution completeness
+
+Private model snapshots are made read-only before execution and are hashed again after
+the checker exits. The private checker executable is also re-hashed after execution.
+Any byte or size change fails closed as an execution-integrity error.
+
+For exit 0 or 1, the runner requires exactly one top-level checker report for every
+selected model. Exit 0 additionally requires every report to be PASS; exit 1 requires
+at least one FAIL report. This prevents a future checker regression from silently
+skipping selected files while still producing nonempty output and a green process
+status. Evidence records the PASS/FAIL/total report counts alongside exact model,
+binary, stdout, and stderr hashes.
