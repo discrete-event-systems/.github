@@ -225,6 +225,16 @@ export function runProcess(command, args, options = {}) {
   });
 }
 
+function reportCounts(stdout) {
+  let passing = 0, failing = 0;
+  for (const line of stdout.split('\n')) {
+    if (!line.startsWith('# Formal state-machine check: ')) continue;
+    if (line.endsWith(' — PASS')) passing++;
+    else if (line.endsWith(' — FAIL')) failing++;
+  }
+  return { passing, failing, total: passing + failing };
+}
+
 async function hashRegularFile(file, maxBytes = 100_000_000) {
   const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -272,6 +282,7 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
       if (total > cap.totalBytes) throw new Error('models exceed aggregate byte limit');
       const snapshot = path.join(temporary, `${index}.json`);
       await fs.writeFile(snapshot, bytes, { flag: 'wx', mode: 0o600 });
+      await fs.chmod(snapshot, 0o400);
       paths.push(snapshot);
       models.push({ path: file.relative, bytes: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex') });
@@ -281,16 +292,48 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
       ['--strict', '--max-states', String(bound), '--', ...paths],
       { cwd: temporary, limits: cap },
     );
-    if (result.code === 0 && !result.stdout.trim()) {
+
+    const failClosed = message => {
       result.code = 2;
-      result.reason = 'checker reported success without evidence';
+      result.reason ??= message;
+    };
+
+    try {
+      const checkerAfter = await hashRegularFile(checkerSnapshot);
+      if (checkerAfter.bytes !== checkerBinary.bytes || checkerAfter.sha256 !== checkerBinary.sha256) {
+        failClosed('checker execution snapshot changed during verification');
+      }
+      for (const [index, snapshot] of paths.entries()) {
+        const after = await hashRegularFile(snapshot, cap.fileBytes);
+        if (after.bytes !== models[index].bytes || after.sha256 !== models[index].sha256) {
+          failClosed(`model execution snapshot changed during verification: ${models[index].path}`);
+          break;
+        }
+      }
+    } catch (error) {
+      failClosed(`post-run integrity check failed: ${error.message}`);
     }
+
+    const reports = reportCounts(result.stdout);
+    if ((result.code === 0 || result.code === 1) && reports.total !== models.length) {
+      failClosed(`checker reported ${reports.total} model result(s) for ${models.length} selected model(s)`);
+    }
+    if (result.code === 0 && (reports.passing !== models.length || reports.failing !== 0)) {
+      failClosed('checker success did not contain one PASS report per selected model');
+    }
+    if (result.code === 1 && reports.failing === 0) {
+      failClosed('checker counterexample exit did not contain a FAIL report');
+    }
+    if (result.code === 0 && !result.stdout.trim()) {
+      failClosed('checker reported success without evidence');
+    }
+
     return { ...result, evidence: {
       schema: 'des.formal-gate.evidence.v2',
       profile: 'organization-baseline-v1',
       modelOnly: true,
       revisions, maxStates: bound, models, checkerBinary,
-      output: result.outputEvidence,
+      output: result.outputEvidence, reports,
       outcome: result.code === 0 ? 'PASS' : result.code === 1 ? 'COUNTEREXAMPLE' : 'ERROR',
       exitCode: result.code, executionError: result.reason,
     } };
