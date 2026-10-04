@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 env:
-  CHECKER_SHA: 31119a0bebb260f84d574e1d1d8e90b51bfb0dc9
-  GATE_SHA: 67139fad8f1eeb6201999915ac395dac40f0c99e
+  CHECKER_SHA: 973076816e7df9457224c215b8a2ef7a7f2666bb
+  GATE_SHA: d31745b874acd7777b8e0a909398df0daa3e8827
 
 jobs:
   formal-model-check:
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: discrete-event-systems/des-mcp-server.rs
-          ref: 31119a0bebb260f84d574e1d1d8e90b51bfb0dc9
+          ref: 973076816e7df9457224c215b8a2ef7a7f2666bb
           path: .des-formal-checker
           persist-credentials: false
 
@@ -56,7 +56,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: discrete-event-systems/.github
-          ref: 67139fad8f1eeb6201999915ac395dac40f0c99e
+          ref: d31745b874acd7777b8e0a909398df0daa3e8827
           path: .des-formal-gate
           persist-credentials: false
 
