@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 env:
-  CHECKER_SHA: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
-  GATE_SHA: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+  CHECKER_SHA: 77948931e2505a5e4cc5e710e609accd975dda7c
+  GATE_SHA: e8d3f1943234e9a6d29491767ac1c936b3bfc144
 
 jobs:
   formal-model-check:
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: discrete-event-systems/des-mcp-server.rs
-          ref: 57a27c2dc7011b8b5ac3fab134882740330bd7b6
+          ref: 77948931e2505a5e4cc5e710e609accd975dda7c
           path: .des-formal-checker
           persist-credentials: false
 
@@ -56,7 +56,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: discrete-event-systems/.github
-          ref: da5c5a1683f4fe5c3aa1ef3b442752fcf2e13f6b
+          ref: e8d3f1943234e9a6d29491767ac1c936b3bfc144
           path: .des-formal-gate
           persist-credentials: false
 
@@ -109,6 +109,7 @@ jobs:
           MODEL_GLOB: ${{ inputs.model_glob }}
           MAX_STATES: ${{ inputs.max_states }}
           EVIDENCE_PATH: ${{ runner.temp }}/formal-gate-evidence.json
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           NODE_OPTIONS: ''
         shell: bash
         run: |

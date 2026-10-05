@@ -4,7 +4,10 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { parseStateBound, parsePattern, matches, discoverModels, runProcess, runGate } from './runner.mjs';
+import {
+  LIMITS, normalizeLimits, parseStateBound, parsePattern, matches,
+  discoverModels, runProcess, runGate,
+} from './runner.mjs';
 
 async function workspace(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'formal-gate-test-'));
@@ -47,6 +50,18 @@ function precisionModel() {
       {"path":"/left","op":"lte","right":{"path":"/right"}}
     ]}]}`;
 }
+
+test('limit overrides may only tighten immutable production ceilings', () => {
+  assert.equal(normalizeLimits({ fileBytes: 4 }).fileBytes, 4);
+  for (const override of [
+    { fileBytes: 0 },
+    { fileBytes: LIMITS.fileBytes + 1 },
+    { timeoutMs: Infinity },
+    { unknown: 1 },
+  ]) {
+    assert.throws(() => normalizeLimits(override), /invalid limit/);
+  }
+});
 
 test('state bounds reject nonintegers, coercion tricks, and out-of-range values', () => {
   for (const value of [1, '1', 10000, '100000']) assert.equal(parseStateBound(value), Number(value));
@@ -157,23 +172,78 @@ test('snapshots preserve exact checked bytes and their original path hashes', as
     import fs from 'node:fs';
     import path from 'node:path';
     const args = process.argv.slice(2);
-    if (args[0] !== '--max-states' || args[1] !== '1000' || args[2] !== '--') process.exit(9);
-    const files = args.slice(3);
-    const result = files.map(file => ({ path: file, bytes: fs.readFileSync(file, 'utf8') }));
-    console.log(JSON.stringify(result));
+    if (args[0] !== '--strict' || args[1] !== '--max-states' || args[2] !== '1000' || args[3] !== '--') process.exit(9);
+    const files = args.slice(4);
+    const observed = files.map(file => ({ path: file, bytes: fs.readFileSync(file, 'utf8') }));
+    console.log('# Formal state-machine check: mock — PASS');
+    console.log(JSON.stringify(observed));
   `);
   const revisions = { caller: 'a'.repeat(40), checker: 'b'.repeat(40), runner: 'c'.repeat(40) };
   const result = await gate(root, executable, { revisions });
   assert.equal(result.code, 0);
-  const snapshots = JSON.parse(result.stdout);
+  const snapshots = JSON.parse(result.stdout.trim().split('\n').at(-1));
   assert.notEqual(snapshots[0].path, original);
   assert.equal(snapshots[0].bytes, raw);
   assert.deepEqual(result.evidence.models, [{ path: 'formal/-model;$.json', bytes: Buffer.byteLength(raw),
     sha256: createHash('sha256').update(raw).digest('hex') }]);
   assert.deepEqual(result.evidence.revisions, revisions);
   assert.equal(result.evidence.modelOnly, true);
+  assert.equal(result.evidence.profile, 'organization-baseline-v1');
+  assert.equal(result.evidence.schema, 'des.formal-gate.evidence.v2');
+  assert.match(result.evidence.checkerBinary.sha256, /^[0-9a-f]{64}$/);
+  assert.match(result.evidence.output.stdout.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(result.evidence.output.stdout.bytes, Buffer.byteLength(result.stdout));
+  assert.deepEqual(result.evidence.reports, { passing: 1, failing: 0, total: 1 });
   await assert.rejects(fs.stat(snapshots[0].path), { code: 'ENOENT' });
   assert.equal(await fs.readFile(original, 'utf8'), raw);
+});
+
+test('invalid UTF-8 checker output fails closed while preserving raw-byte evidence', async () => {
+  const result = await runProcess(process.execPath, [
+    '-e', 'process.stdout.write(Buffer.from([0xff])); process.exit(0);',
+  ]);
+  assert.equal(result.code, 2);
+  assert.match(result.reason, /not valid UTF-8/);
+  assert.equal(result.outputEvidence.stdout.bytes, 1);
+  assert.equal(
+    result.outputEvidence.stdout.sha256,
+    createHash('sha256').update(Buffer.from([0xff])).digest('hex'),
+  );
+});
+
+test('post-run integrity rejects model snapshot mutation', async t => {
+  const root = await workspace(t);
+  await write(root, 'formal/a.json', '{}');
+  const executable = await checker(root, `
+    import fs from 'node:fs';
+    const model = process.argv.at(-1);
+    fs.chmodSync(model, 0o600);
+    fs.appendFileSync(model, ' ');
+    console.log('# Formal state-machine check: mock — PASS');
+  `);
+  const result = await gate(root, executable);
+  assert.equal(result.code, 2);
+  assert.equal(result.evidence.outcome, 'ERROR');
+  assert.match(result.reason, /snapshot changed during verification/);
+});
+
+test('successful and counterexample exits must account for every selected model', async t => {
+  for (const [exitCode, line] of [
+    [0, '# Formal state-machine check: only-one — PASS'],
+    [1, '# Formal state-machine check: only-one — FAIL'],
+  ]) {
+    const root = await workspace(t);
+    await write(root, `formal/a-${exitCode}.json`);
+    await write(root, `formal/b-${exitCode}.json`);
+    const executable = await checker(
+      root,
+      `console.log(${JSON.stringify(line)}); process.exit(${exitCode});`,
+    );
+    const result = await gate(root, executable);
+    assert.equal(result.code, 2);
+    assert.equal(result.evidence.outcome, 'ERROR');
+    assert.match(result.reason, /reported 1 model result\(s\) for 2 selected model\(s\)/);
+  }
 });
 
 test('process exit codes 0, 1, and 2 remain distinct', async () => {
@@ -204,6 +274,21 @@ test('checker execution time is bounded', async () => {
   assert.match(result.reason, /timed out/);
 });
 
+test('timeout cleanup kills checker descendants in the same process group', async t => {
+  const root = await workspace(t);
+  const marker = path.join(root, 'escaped.txt');
+  const grandchild = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'escaped'), 400)`;
+  const parent = `
+    const { spawn } = require('node:child_process');
+    spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' });
+    setInterval(() => {}, 10000);
+  `;
+  const result = await runProcess(process.execPath, ['-e', parent], { limits: { timeoutMs: 100 } });
+  assert.equal(result.code, 2);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  await assert.rejects(fs.stat(marker), { code: 'ENOENT' });
+});
+
 test('combined stdout and stderr are bounded while streaming', async () => {
   const result = await runProcess(process.execPath, ['-e',
     'process.stdout.write("a".repeat(1000)); process.stderr.write("b".repeat(1000));'], {
@@ -221,14 +306,17 @@ test('empty success is not verification evidence', async t => {
   const result = await gate(root, executable);
   assert.equal(result.code, 2);
   assert.equal(result.evidence.outcome, 'ERROR');
-  assert.match(result.reason, /without evidence/);
+  assert.match(result.reason, /without evidence|reported 0 model result/);
 });
 
 test('counterexample and invalid-model outcomes cannot be relabeled PASS', async t => {
   for (const [code, expected] of [[1, 'COUNTEREXAMPLE'], [2, 'ERROR']]) {
     const root = await workspace(t);
     await write(root, 'formal/a.json');
-    const executable = await checker(root, `console.log('diagnostic'); process.exit(${code});`);
+    const line = code === 1
+      ? '# Formal state-machine check: counterexample — FAIL'
+      : 'diagnostic';
+    const executable = await checker(root, `console.log(${JSON.stringify(line)}); process.exit(${code});`);
     const result = await gate(root, executable);
     assert.equal(result.code, code);
     assert.equal(result.evidence.outcome, expected);
@@ -255,6 +343,29 @@ const nativeCases = [
       assert: [{ path: '/amount', op: 'gte', right: { value: 0 } }],
     }],
   }), 1],
+  ['zero safety invariants', JSON.stringify({
+    $schema: 'des/state-machine/v1', name: 'empty proof', initial: 'done',
+    states: { done: {} }, terminal_states: ['done'],
+  }), 2],
+  ['disabled baseline check', JSON.stringify({
+    $schema: 'des/state-machine/v1', name: 'disabled check', initial: 'done',
+    states: { done: { ok: true } }, terminal_states: ['done'],
+    checks: { deterministic_events: false, nonterminal_deadlocks: true, terminal_reachability: true },
+    invariants: [{ name: 'safe', assert: [{ path: '/ok', op: 'eq', right: { value: true } }] }],
+  }), 2],
+  ['vacuous invariant warning', JSON.stringify({
+    $schema: 'des/state-machine/v1', name: 'vacuous', initial: 'done',
+    states: { done: { kind: 'ordinary', amount: 0 } }, terminal_states: ['done'],
+    invariants: [{ name: 'protected amount',
+      when: [{ path: '/kind', op: 'eq', right: { value: 'protected' } }],
+      assert: [{ path: '/amount', op: 'gte', right: { value: 0 } }],
+    }],
+  }), 2],
+  ['unreachable specification drift', JSON.stringify({
+    $schema: 'des/state-machine/v1', name: 'drift', initial: 'done',
+    states: { done: { ok: true }, unused: { ok: true } }, terminal_states: ['done'],
+    invariants: [{ name: 'safe', assert: [{ path: '/ok', op: 'eq', right: { value: true } }] }],
+  }), 2],
 ];
 for (const [name, raw, expected] of nativeCases) {
   test(`native verifier: ${name}`, { skip: native ? false : 'native Rust binary not available locally' }, async t => {

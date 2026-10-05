@@ -20,13 +20,16 @@ The workflow deliberately runs on Linux. Reads use `O_NOFOLLOW`, `O_NONBLOCK`, r
 
 Each selected file is copied byte-for-byte into a private temporary directory. SHA-256 is calculated from those same bytes, not a separately re-read pathname or JSON reserialization. The checker receives the snapshots as arguments after `--`, without shell expansion. This is a raw-byte evidence hash, not JCS canonicalization or an `ores.formal-interchange.v1` conformance claim.
 
-The evidence object has schema `des.formal-gate.evidence.v1`, caller/checker/runner revisions, model paths and hashes, the state bound, and one of:
+The evidence object has schema `des.formal-gate.evidence.v2` and profile
+`organization-baseline-v1`. It records caller/checker/runner/workflow revisions, model paths
+and exact-byte hashes, the state bound, the built checker binary's SHA-256 and byte
+size, and hashes/byte counts of captured stdout and stderr, plus one of:
 
 - `PASS` / exit 0: the pinned checker returned success with nonempty evidence;
 - `COUNTEREXAMPLE` / exit 1: the checker rejected a well-formed model;
 - `ERROR` / exit 2: malformed input or an execution error, including timeout, excessive output, unexpected exit status, signal, or empty success output.
 
-Preflight errors fail with exit 2 before execution. They may not have a completed evidence manifest. The job summary uses indented JSON rather than interpreting model-provided Markdown. Workflow command parsing is suspended while printing checker output. A successful result remains **model-only**: implementation conformance, exact-real arithmetic, and fairness-based termination have not been proved. Vacuity and unreachable-state warnings remain visible in checker output and require review.
+Preflight errors fail with exit 2 before execution. They may not have a completed evidence manifest. The job summary uses indented JSON rather than interpreting model-provided Markdown. Workflow command parsing is suspended while printing checker output. A successful result remains **model-only**: implementation conformance, exact-real arithmetic, and fairness-based termination have not been proved. The organization profile invokes the checker with `--strict`: zero-invariant models, explicitly disabled baseline checks, unreachable-state drift, and vacuous conditional invariants fail closed rather than producing green warning-only evidence.
 
 ## Tests
 
@@ -35,7 +38,10 @@ node --check tools/formal-gate/runner.mjs
 node --test tools/formal-gate/runner.test.mjs
 ```
 
-Nineteen local tests cover grammar, deterministic traversal, empty selection, symlink escapes/cycles, bounds, UTF-8, snapshot hashes, exit semantics, execution deadlines, output caps, and absent evidence. Seven more controls use the actual Rust executable:
+Local tests cover grammar, immutable production ceilings, deterministic traversal,
+empty selection, symlink escapes/cycles, bounded reads, UTF-8, snapshot and binary
+hashes, exit semantics, process-tree cleanup, execution deadlines, output caps, and
+absent evidence. Native controls additionally use the actual Rust executable:
 
 ```sh
 DES_REQUIRE_NATIVE_CHECKER=1 \
@@ -43,8 +49,42 @@ DES_FORMAL_CHECKER_PATH=/absolute/path/to/des-formal-check \
 node --test tools/formal-gate/runner.test.mjs
 ```
 
-The reusable CI workflow sets both variables and requires all 26 tests, including real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, and missing guard inputs. The native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
+The reusable CI workflow sets both variables and requires all 35 tests: 24 runner/process-boundary tests plus 11 controls using the real Rust executable. Native controls cover real success, safety failure, malformed JSON, duplicate states, precision regression, overflowing integers, missing guard inputs, zero-invariant policy bypass, disabled baseline checks, vacuous invariants, and unreachable specification drift. Native tests are explicitly skipped only in a local invocation without that executable; missing CI configuration is an error.
 
 ## Review order
 
-This change is stacked on `.github#17` and depends on `des-mcp-server.rs#35`, itself stacked on #28. Accept the checker correction into #28 before approving the initial checker. Accept this gate correction into #17 before approving the initial reusable gate. Re-check final merge results and deliberately repin helpers after review; branch deletion or squash merging must not be assumed to preserve ancestry of the pinned commits.
+The original gate (#17) and first hardening pass (#21) are already on `main`. This follow-up depends on `des-mcp-server.rs#55`, stacked on the still-open checker feature #28. Review the strict checker first, then this gate pin. Re-check exact merge results and deliberately repin helpers after review; do not assume branch ancestry or a squash strategy preserves an intended helper revision.
+
+
+## Process and policy hardening
+
+Production limits are immutable ceilings: test helpers may tighten them but cannot
+raise or disable them. The Linux runner starts the checker in its own process group
+and kills that entire group on timeout, output overflow, and normal completion so
+orphaned descendants cannot escape the gate's resource boundary.
+
+The organization gate always invokes `des-formal-check --strict`. The generic
+checker remains available outside the reusable organization workflow for exploratory
+models, but permissive settings are never promoted to organization-baseline PASS
+evidence.
+
+
+The checker is copied into the invocation-owned private temporary directory before
+execution. The source and private executable must have identical size and SHA-256,
+and evidence records the private executable actually invoked. Captured stdout/stderr
+hashes are computed over the exact bounded byte buffers before UTF-8 decoding;
+invalid UTF-8 output is an execution error rather than replacement-character text.
+
+
+## Execution completeness
+
+Private model snapshots are made read-only before execution and are hashed again after
+the checker exits. The private checker executable is also re-hashed after execution.
+Any byte or size change fails closed as an execution-integrity error.
+
+For exit 0 or 1, the runner requires exactly one top-level checker report for every
+selected model. Exit 0 additionally requires every report to be PASS; exit 1 requires
+at least one FAIL report. This prevents a future checker regression from silently
+skipping selected files while still producing nonempty output and a green process
+status. Evidence records the PASS/FAIL/total report counts alongside exact model,
+binary, stdout, and stderr hashes.

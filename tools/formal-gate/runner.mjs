@@ -11,6 +11,20 @@ export const LIMITS = Object.freeze({
   entries: 10_000, depth: 64, outputBytes: 1_000_000, timeoutMs: 120_000,
 });
 
+export function normalizeLimits(overrides = {}) {
+  if (overrides === null || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    throw new Error('limits must be an object of bounded positive integers');
+  }
+  const result = { ...LIMITS };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!(key in LIMITS) || !Number.isSafeInteger(value) || value < 1 || value > LIMITS[key]) {
+      throw new Error(`invalid limit override for ${key}`);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
 export function parseStateBound(value) {
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw new Error('max_states must be an integer between 1 and 100000');
@@ -77,7 +91,7 @@ function within(candidate, root) {
 }
 
 export async function discoverModels(root, pattern, options = {}) {
-  const limits = { ...LIMITS, ...options.limits };
+  const limits = normalizeLimits(options.limits);
   root = await fs.realpath(root);
   const excluded = (options.excluded ?? []).map(p => path.resolve(root, p));
   const parts = parsePattern(pattern), files = [];
@@ -143,12 +157,27 @@ async function readBounded(file, root, excluded, limit) {
 }
 
 export function runProcess(command, args, options = {}) {
-  const limits = { ...LIMITS, ...options.limits };
+  const limits = normalizeLimits(options.limits);
   return new Promise(resolve => {
     let reason = null, used = 0;
     const stdout = [], stderr = [];
-    const child = spawn(command, args, { cwd: options.cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-    const stop = message => { reason ??= message; child.kill('SIGKILL'); };
+    const child = spawn(command, args, {
+      cwd: options.cwd, shell: false, detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const killTree = () => {
+      if (child.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+          return;
+        } catch (error) {
+          if (error?.code !== 'ESRCH') child.kill('SIGKILL');
+        }
+      } else {
+        child.kill('SIGKILL');
+      }
+    };
+    const stop = message => { reason ??= message; killTree(); };
     const timer = setTimeout(() => stop('checker timed out'), limits.timeoutMs);
     function consume(list, chunk) {
       const remaining = Math.max(0, limits.outputBytes - used);
@@ -161,23 +190,90 @@ export function runProcess(command, args, options = {}) {
     child.on('error', error => { reason ??= `checker could not start: ${error.code ?? 'error'}`; });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      // A trusted checker should not leave descendants behind, but always
+      // clean the process group so a future regression cannot escape bounds.
+      killTree();
       if (signal) reason ??= `checker terminated by ${signal}`;
       if (![0, 1, 2].includes(code)) reason ??= 'checker returned an unexpected exit status';
-      resolve({ code: reason ? 2 : code, reason,
-        stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') });
+      const stdoutBytes = Buffer.concat(stdout);
+      const stderrBytes = Buffer.concat(stderr);
+      let stdoutText = '', stderrText = '';
+      try {
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        stdoutText = decoder.decode(stdoutBytes);
+        stderrText = decoder.decode(stderrBytes);
+      } catch {
+        reason ??= 'checker output is not valid UTF-8';
+      }
+      resolve({
+        code: reason ? 2 : code,
+        reason,
+        stdout: stdoutText,
+        stderr: stderrText,
+        outputEvidence: {
+          stdout: {
+            bytes: stdoutBytes.length,
+            sha256: createHash('sha256').update(stdoutBytes).digest('hex'),
+          },
+          stderr: {
+            bytes: stderrBytes.length,
+            sha256: createHash('sha256').update(stderrBytes).digest('hex'),
+          },
+        },
+      });
     });
   });
 }
 
+function reportCounts(stdout) {
+  let passing = 0, failing = 0;
+  for (const line of stdout.split('\n')) {
+    if (!line.startsWith('# Formal state-machine check: ')) continue;
+    if (line.endsWith(' — PASS')) passing++;
+    else if (line.endsWith(' — FAIL')) failing++;
+  }
+  return { passing, failing, total: passing + failing };
+}
+
+async function hashRegularFile(file, maxBytes = 100_000_000) {
+  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > maxBytes) throw new Error('checker must be a bounded regular file');
+    const hash = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    let position = 0;
+    while (position < stat.size) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, stat.size - position), position);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    if (position !== stat.size) throw new Error('checker changed while hashing');
+    return { bytes: stat.size, sha256: hash.digest('hex') };
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function runGate({ root, pattern, maxStates, checker, revisions = {}, limits = {}, excluded = [] }) {
   const bound = parseStateBound(maxStates);
-  const cap = { ...LIMITS, ...limits };
+  const cap = normalizeLimits(limits);
   root = await fs.realpath(root);
   checker = await fs.realpath(checker);
+  const sourceChecker = await hashRegularFile(checker);
   const excludedPaths = excluded.map(p => path.resolve(root, p));
   const files = await discoverModels(root, pattern, { limits: cap, excluded });
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'des-formal-input-'));
   try {
+    const checkerSnapshot = path.join(temporary, 'des-formal-check');
+    await fs.copyFile(checker, checkerSnapshot, constants.COPYFILE_EXCL);
+    await fs.chmod(checkerSnapshot, 0o500);
+    const checkerBinary = await hashRegularFile(checkerSnapshot);
+    if (checkerBinary.bytes !== sourceChecker.bytes || checkerBinary.sha256 !== sourceChecker.sha256) {
+      throw new Error('checker changed while creating the private execution snapshot');
+    }
+
     const models = [], paths = [];
     let total = 0;
     for (const [index, file] of files.entries()) {
@@ -186,18 +282,58 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
       if (total > cap.totalBytes) throw new Error('models exceed aggregate byte limit');
       const snapshot = path.join(temporary, `${index}.json`);
       await fs.writeFile(snapshot, bytes, { flag: 'wx', mode: 0o600 });
+      await fs.chmod(snapshot, 0o400);
       paths.push(snapshot);
       models.push({ path: file.relative, bytes: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex') });
     }
-    const result = await runProcess(checker, ['--max-states', String(bound), '--', ...paths], { cwd: temporary, limits: cap });
-    if (result.code === 0 && !result.stdout.trim()) {
+    const result = await runProcess(
+      checkerSnapshot,
+      ['--strict', '--max-states', String(bound), '--', ...paths],
+      { cwd: temporary, limits: cap },
+    );
+
+    const failClosed = message => {
       result.code = 2;
-      result.reason = 'checker reported success without evidence';
+      result.reason ??= message;
+    };
+
+    try {
+      const checkerAfter = await hashRegularFile(checkerSnapshot);
+      if (checkerAfter.bytes !== checkerBinary.bytes || checkerAfter.sha256 !== checkerBinary.sha256) {
+        failClosed('checker execution snapshot changed during verification');
+      }
+      for (const [index, snapshot] of paths.entries()) {
+        const after = await hashRegularFile(snapshot, cap.fileBytes);
+        if (after.bytes !== models[index].bytes || after.sha256 !== models[index].sha256) {
+          failClosed(`model execution snapshot changed during verification: ${models[index].path}`);
+          break;
+        }
+      }
+    } catch (error) {
+      failClosed(`post-run integrity check failed: ${error.message}`);
     }
+
+    const reports = reportCounts(result.stdout);
+    if ((result.code === 0 || result.code === 1) && reports.total !== models.length) {
+      failClosed(`checker reported ${reports.total} model result(s) for ${models.length} selected model(s)`);
+    }
+    if (result.code === 0 && (reports.passing !== models.length || reports.failing !== 0)) {
+      failClosed('checker success did not contain one PASS report per selected model');
+    }
+    if (result.code === 1 && reports.failing === 0) {
+      failClosed('checker counterexample exit did not contain a FAIL report');
+    }
+    if (result.code === 0 && !result.stdout.trim()) {
+      failClosed('checker reported success without evidence');
+    }
+
     return { ...result, evidence: {
-      schema: 'des.formal-gate.evidence.v1', modelOnly: true,
-      revisions, maxStates: bound, models,
+      schema: 'des.formal-gate.evidence.v2',
+      profile: 'organization-baseline-v1',
+      modelOnly: true,
+      revisions, maxStates: bound, models, checkerBinary,
+      output: result.outputEvidence, reports,
       outcome: result.code === 0 ? 'PASS' : result.code === 1 ? 'COUNTEREXAMPLE' : 'ERROR',
       exitCode: result.code, executionError: result.reason,
     } };
@@ -209,7 +345,12 @@ export async function runGate({ root, pattern, maxStates, checker, revisions = {
 
 async function main() {
   const revisions = {};
-  for (const [name, variable] of [['caller', 'CALLER_SHA'], ['checker', 'CHECKER_SHA'], ['runner', 'GATE_SHA']]) {
+  for (const [name, variable] of [
+    ['caller', 'CALLER_SHA'],
+    ['checker', 'CHECKER_SHA'],
+    ['runner', 'GATE_SHA'],
+    ['workflow', 'WORKFLOW_SHA'],
+  ]) {
     const value = process.env[variable];
     if (!/^[0-9a-f]{40}$/.test(value ?? '')) throw new Error(`${variable} must identify the exact checked revision`);
     revisions[name] = value;

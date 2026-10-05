@@ -111,3 +111,13 @@ The reusable workflow pins the checker source to an immutable commit. Upgrades r
 3. documents semantic changes and compatibility risks;
 4. preserves stable exit semantics (`0` pass, `1` counterexample, `2` invalid input);
 5. verifies that malformed or absent model input fails closed.
+
+
+## Baseline enforcement
+
+The organization reusable workflow invokes the checker in strict mode. Baseline
+evidence is invalid if a model has no safety invariant, disables any of the three
+baseline graph obligations, declares unreachable states, or contains a conditional
+invariant whose guard never matches a reachable state. Exploratory models may use
+the generic checker locally, but they must not be represented as organization
+baseline verification evidence.
