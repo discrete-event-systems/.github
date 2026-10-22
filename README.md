@@ -1,5 +1,7 @@
 # discrete-event-systems organization defaults
 
+**Scripting policy:** [Rust for all scripts; narrow Python app exceptions](CONTRIBUTING.md#rust-first-scripts-and-automation).
+
 This public `.github` repository contains organization-wide community health files, contributor guidance, shared agent policy, an explicit repository-relationship contract, and project/planning routing.
 
 - [Project and Linear routing](PROJECTS.md)
